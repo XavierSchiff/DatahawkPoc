@@ -29,13 +29,16 @@ namespace DatahawkPoc.Controllers
                 var reviewTaskList = new List<Task<IEnumerable<Review>>>();
                 for (var pageNum = 1; pageNum < 6; pageNum++)
                 {
-                    reviewTaskList.Add(GetPageReviews(asin, pageNum, cancellationToken));
+                    var url = $"https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?sortBy=recent&pageNumber={pageNum}";
+                    reviewTaskList.Add(GetPageReviews(asin, url, cancellationToken));
                 }
-                var completedReviews = await Task.WhenAll(reviewTaskList);
 
-                return Ok(completedReviews
-                    .SelectMany(r => r)
-                    .OrderByDescending(r => r.ReviewDate));
+                return Ok(await reviewTaskList
+                    .Map(Task.WhenAll)
+                    .Map(reviews => reviews
+                        .SelectMany(r => r)
+                        .OrderByDescending(r => r
+                            .ReviewDate)));
             }
             catch (Exception e)
             {
@@ -44,25 +47,22 @@ namespace DatahawkPoc.Controllers
             }
         }
 
-        private async Task<IEnumerable<Review>> GetPageReviews(string asin, int pageNum, CancellationToken cancellationToken)
-        {
-            var url = $"https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?sortBy=recent&pageNumber={pageNum}";
-
-            var config = Configuration.Default.WithDefaultLoader();
-            var context = BrowsingContext.New(config);
-            var document = await context.OpenAsync(url, cancellationToken);
-
-            return document
-                .QuerySelectorAll("[data-hook=\"review\"]")
-                .Select(r => new Review
-                {
-                    Asin = asin,
-                    Rating = r.GetReviewRating(),
-                    ReviewContent = r.GetReviewContent(),
-                    ReviewDate = r.GetReviewDate(),
-                    ReviewTitle = r.GetReviewTitle()
-                });
-        }
-
+        private async Task<IEnumerable<Review>> GetPageReviews(string asin, string url, CancellationToken cancellationToken) =>
+            await Configuration.Default.WithDefaultLoader()
+                .Map(BrowsingContext.New)
+                .Map(context => context
+                    .OpenAsync(
+                        address: url, 
+                        cancellation: cancellationToken))
+                .Map(doc => doc
+                    .QuerySelectorAll("[data-hook=\"review\"]")
+                    .Select(r => new Review
+                    {
+                        Asin = asin,
+                        Rating = r.GetReviewRating(),
+                        ReviewContent = r.GetReviewContent(),
+                        ReviewDate = r.GetReviewDate(),
+                        ReviewTitle = r.GetReviewTitle()
+                    }));
     }
 }
